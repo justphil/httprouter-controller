@@ -1,8 +1,10 @@
-# controller
-Package controller is a lightweight and composable controller implementation
-for net/http
+# httprouter-controller
+httprouter-controller is a lightweight and composable controller implementation
+for the [httprouter](https://github.com/julienschmidt/httprouter) package. It
+is basically a fork of [controller](https://github.com/codegangsta/controller) with
+minor changes that satisfy httprouter's [Handle](http://godoc.org/github.com/julienschmidt/httprouter#Handle) type.
 
-Sometimes plain net/http handlers are not enough, and you want to have logic
+Sometimes plain httprouter handlers are not enough, and you want to have logic
 that is resource/concept specific, and data that is request specific.
 
 This is where controllers come into play. Controllers are structs that
@@ -20,7 +22,7 @@ package main
 import (
   "net/http"
 
-  "github.com/codegangsta/controller"
+  "https://github.com/justphil/httprouter-controller"
 )
 
 type MyController struct {
@@ -28,13 +30,15 @@ type MyController struct {
 }
 
 func (c *MyController) Index() error {
-  c.ResponseWriter.Write([]byte("Hello World"))
+  name := c.Params.ByName("name")
+  c.ResponseWriter.Write([]byte("URL Param name set to: " + name))
   return nil
 }
 
 func main() {
-  http.Handle("/", controller.Action((*MyController).Index))
-  http.ListenAndServe(":3000", nil)
+  router := httprouter.New()
+  router.GET("/hello/:name", controller.Action((*MyController).Index))
+  http.ListenAndServe(":3000", router)
 }
 
 ```

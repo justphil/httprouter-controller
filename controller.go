@@ -1,7 +1,7 @@
 // Package controller is a lightweight and composable controller implementation
-// for net/http
+// for github.com/julienschmidt/httprouter
 //
-// Sometimes plain net/http handlers are not enough, and you want to have logic
+// Sometimes plain httprouter handlers are not enough, and you want to have logic
 // that is resource/concept specific, and data that is request specific.
 //
 // This is where controllers come into play. Controllers are structs that
@@ -18,14 +18,15 @@
 //    }
 //
 //    func (c *MyController) Index() error {
-//      c.ResponseWriter.Write([]byte("Hello World"))
+//		name := c.Params.ByName("name")
+//      c.ResponseWriter.Write([]byte("URL Param name set to: " + name))
 //      return nil
 //    }
 //
 // To handle HTTP requests with this controller, use the controller.Action
 // function:
-//
-//    http.Handle("/", controller.Action((*MyController).Index))
+//    router := httprouter.New()
+//    router.GET("/hello/:name", controller.Action((*MyController).Index))
 //
 package controller
 
@@ -33,17 +34,19 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+
+	"github.com/julienschmidt/httprouter"
 )
 
 // Controller is an interface for defining a web controller that can be
 // automatically constructed via the controller.Action function. This interface
 // contains lifecycle methods that are vital during the controllers lifetime.
-// A controller instance is constructed every time the http.Handler result from
+// A controller instance is constructed every time the httprouter.Handle result from
 // controller.Action is invoked (this is usually every http request)
 type Controller interface {
 	// Init initializes the controller. If it returns an error, then the Error
 	// method on the controller will be invoked.
-	Init(http.ResponseWriter, *http.Request) error
+	Init(http.ResponseWriter, *http.Request, httprouter.Params) error
 	// Destroy is called after the Controllers action has been called or after an
 	// error has occured. This is a useful method for cleaning up anything that
 	// was initialized.
@@ -55,18 +58,21 @@ type Controller interface {
 }
 
 // Base is a base implementation for a Controller. It contains the Request and
-// ResponseWriter objects for controller actions to easily consume. Base is
-// meant to be embedded in your own controller struct.
+// ResponseWriter objects for controller actions to easily consume. Additionally
+// it contains the httprouter.Params allowing you to access the named parameters
+// provided via the httprouter.Handle function.
+// Base is meant to be embedded in your own controller struct.
 type Base struct {
 	Request        *http.Request
 	ResponseWriter http.ResponseWriter
+	Params         httprouter.Params
 }
 
-// Init initializes the base controller with a ResponseWriter and Request.
+// Init initializes the base controller with a ResponseWriter, Request and httprouter.Params.
 // Embedders of this struct should remember to call Init if the embedder is
 // implementing the Init function themselves.
-func (b *Base) Init(rw http.ResponseWriter, r *http.Request) error {
-	b.Request, b.ResponseWriter = r, rw
+func (b *Base) Init(rw http.ResponseWriter, r *http.Request, params httprouter.Params) error {
+	b.Request, b.ResponseWriter, b.Params = r, rw, params
 	return nil
 }
 
@@ -80,7 +86,7 @@ func (b *Base) Error(code int, error string) {
 }
 
 // Action takes a method expression and translates it into a callable
-// http.Handler which, when called:
+// httprouter.Handle which, when called:
 //
 // 		1. Constructs a controller instance
 // 		2. Initializes the controller via the Init function
@@ -89,7 +95,7 @@ func (b *Base) Error(code int, error string) {
 //
 // This flow allows for similar logic to be cleanly reused while data is no
 // longer shared between requests. This is because a new Controller instance
-// will be constructed every time the returned http.Handler's ServeHTTP method
+// will be constructed every time the returned httprouter.Handle's ServeHTTP method
 // is invoked.
 //
 // An example of a valid method expression is:
@@ -98,17 +104,17 @@ func (b *Base) Error(code int, error string) {
 //
 // Where MyController is an implementor of the Controller interface and Index
 // is a method on MyController that takes no arguments and returns an err
-func Action(action interface{}) http.Handler {
+func Action(action interface{}) httprouter.Handle {
 	val := reflect.ValueOf(action)
 	t, err := controllerType(val)
 	if err != nil {
 		panic(err)
 	}
 
-	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+	return func(rw http.ResponseWriter, r *http.Request, params httprouter.Params) {
 		v := reflect.New(t)
 		c := v.Interface().(Controller)
-		err = c.Init(rw, r)
+		err = c.Init(rw, r, params)
 		defer c.Destroy()
 		if err != nil {
 			c.Error(http.StatusInternalServerError, err.Error())
@@ -119,7 +125,7 @@ func Action(action interface{}) http.Handler {
 			c.Error(http.StatusInternalServerError, ret.(error).Error())
 			return
 		}
-	})
+	}
 }
 
 func controllerType(action reflect.Value) (reflect.Type, error) {
